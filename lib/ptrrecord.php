@@ -21,102 +21,116 @@ require_once(__DIR__.'/record.php');
  * the PtrRecord is a child of the service, and not a child of a Domain.
  *
  */
-class PtrRecord extends Record {
+class ptrrecord extends Record
+{
+    protected static
+        $json_name = FALSE,
+        $json_collection_name = 'records',
+        $url_resource = 'rdns';
 
-	protected static
-		$json_name = FALSE,
-		$json_collection_name = 'records',
-		$url_resource = 'rdns';
+    private
+        $link_rel,
+        $link_href;
 
-	private
-		$link_rel,
-		$link_href;
+    /**
+     * constructur ensures that the record type is PTR
+     */
+    public function __construct($parent, $info=NULL)
+    {
+        $this->type = 'PTR';
+        parent::__construct($parent, $info);
+        if ($this->type != 'PTR')
+            throw new RecordTypeError(sprintf(
+                _('Invalid record type [%s], must be PTR'), $this->type));
+    }
 
-	/**
-	 * constructur ensures that the record type is PTR
-	 */
-	public function __construct($parent, $info=NULL) {
-		$this->type = 'PTR';
-		parent::__construct($parent, $info);
-		if ($this->type != 'PTR')
-			throw new RecordTypeError(sprintf(
-				_('Invalid record type [%s], must be PTR'), $this->type));
-	}
+    /**
+     * specialized DNS PTR URL requires server service name and href
+     */
+    public function Url($subresource=NULL, $params=array())
+    {
+        if (isset($subresource))
+            $url = $this->Parent()->Url($subresource, $params);
+        else
+            $url = $this->Parent()->Url(self::$url_resource, $params);
 
-	/**
-	 * specialized DNS PTR URL requires server service name and href
-	 */
-	public function Url($subresource=NULL, $params=array()) {
-		if (isset($subresource))
-			$url = $this->Parent()->Url($subresource, $params);
-		else
-			$url = $this->Parent()->Url(self::$url_resource, $params);
-		return $url;
-	}
+        return $url;
+    }
 
-	/**
-	 * DNS PTR Create() method requires a server
-	 */
-	public function Create($param=array(), \OpenCloud\Compute\Server $srv) {
-		$this->link_rel = $srv->Service()->Name();
-		$this->link_href = $srv->Url();
-		return parent::Create($param);
-	}
+    /**
+     * DNS PTR Create() method requires a server
+     */
+    public function Create($param = array())
+    {
+        $srv = $param[0];
+        $this->link_rel = $srv->Service()->Name();
+        $this->link_href = $srv->Url();
 
-	/**
-	 * DNS PTR Update() method requires a server
-	 */
-	public function Update($param=array(), \OpenCloud\Compute\Server $srv) {
-		$this->link_rel = $srv->Service()->Name();
-		$this->link_href = $srv->Url();
-		return parent::Update($param);
-	}
+        return parent::Create($param[1]);
+    }
 
-	/**
-	 * DNS PTR Delete() method requires a server
-	 *
-	 * Note that delete will remove ALL PTR records associated with the device
-	 * unless you pass in the parameter ip={ip address}
-	 *
-	 */
-	public function Delete(\OpenCloud\Compute\Server $srv) {
-		$this->link_rel = $srv->Service()->Name();
-		$this->link_href = $srv->Url();
-		$url = $this->Url('rdns/'.$this->link_rel,
-			array('href'=>$this->link_href));
-		if (isset($this->data))
-			$url .= '&ip='.$this->data;
+    /**
+     * DNS PTR Update() method requires a server
+     */
+    public function Update($param=array())
+    {
+        $srv = $param[0];
+        $this->link_rel = $srv->Service()->Name();
+        $this->link_href = $srv->Url();
 
-		// perform the request
-		$resp = $this->Service()->Request($url, 'DELETE');
+        return parent::Update($param[1]);
+    }
 
-		// return the AsyncResponse object
-		return new AsyncResponse($this->Service(), $resp->HttpBody());
-	}
+    /**
+     * DNS PTR Delete() method requires a server
+     *
+     * Note that delete will remove ALL PTR records associated with the device
+     * unless you pass in the parameter ip={ip address}
+     *
+     */
+    public function Delete(\OpenCloud\Compute\Server $srv = null)
+    {
+        $this->link_rel = $srv->Service()->Name();
+        $this->link_href = $srv->Url();
+        $url = $this->Url('rdns/'.$this->link_rel,
+            array('href'=>$this->link_href));
+        if (isset($this->data))
+            $url .= '&ip='.$this->data;
 
-	/* ---------- PROTECTED METHODS ---------- */
+        // perform the request
+        $resp = $this->Service()->Request($url, 'DELETE');
 
-	/**
-	 * Specialized JSON for DNS PTR creates and updates
-	 */
-	protected function CreateJson() {
-		$obj = new \stdClass;
-		$obj->recordsList = parent::CreateJson();
+        // return the AsyncResponse object
+        return new AsyncResponse($this->Service(), $resp->HttpBody());
+    }
 
-		// add links from server
-		$obj->link = new \stdClass;
-		$obj->link->href = $this->link_href;
-		$obj->link->rel  = $this->link_rel;
-		return $obj;
-	}
+    /* ---------- PROTECTED METHODS ---------- */
 
-	/**
-	 * The Update() JSON requires a record ID
-	 */
-	protected function UpdateJson() {
-		$obj = $this->CreateJson();
-		$obj->recordsList->records[0]->id = $this->id;
-		return $obj;
-	}
+    /**
+     * Specialized JSON for DNS PTR creates and updates
+     */
+    protected function CreateJson()
+    {
+        $obj = new \stdClass;
+        $obj->recordsList = parent::CreateJson();
+
+        // add links from server
+        $obj->link = new \stdClass;
+        $obj->link->href = $this->link_href;
+        $obj->link->rel  = $this->link_rel;
+
+        return $obj;
+    }
+
+    /**
+     * The Update() JSON requires a record ID
+     */
+    protected function UpdateJson($params = array())
+    {
+        $obj = $this->CreateJson();
+        $obj->recordsList->records[0]->id = $this->id;
+
+        return $obj;
+    }
 
 } // class PtrRecord

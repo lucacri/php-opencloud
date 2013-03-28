@@ -38,7 +38,7 @@ interface HttpRequest
  * @api
  * @author Glen Campbell <glen.campbell@rackspace.com>
  */
-class CurlRequest extends Base implements HTTPRequest {
+class CurlRequest implements HTTPRequest {
 
 	private
 		$url,
@@ -66,16 +66,17 @@ class CurlRequest extends Base implements HTTPRequest {
         $this->SetOption(CURLOPT_CUSTOMREQUEST, $method);
         foreach($options as $opt => $value) {
         	$this->debug(_('Setting option %s=%s'), $opt, $value);
-        	$this->SetOption($opt, $value);
+        	$this->SetOptions($opt, $value);
         }
 
         // set security handling options
-        if (RAXSDK_SSL_VERIFYHOST != 2) {
-            syslog(LOG_WARNING, _("WARNING: RAXSDK_SSL_VERIFYHOST has reduced security, value [" . RAXSDK_SSL_VERIFYHOST . "]\n"));
-        }
-        if (RAXSDK_SSL_VERIFYPEER !== TRUE) {
-            syslog(LOG_WARNING, _("WARNING: RAXSDK_SSL_VERIFYPEER has reduced security\n"));
-        }
+        if (RAXSDK_SSL_VERIFYHOST != 2)
+            printf(
+            	_('WARNING: RAXSDK_SSL_VERIFYHOST has reduced security, '.
+            	  "value [%d]\n"),
+                RAXSDK_SSL_VERIFYHOST);
+        if (RAXSDK_SSL_VERIFYPEER !== TRUE)
+            printf("WARNING: RAXSDK_SSL_VERIFYPEER has reduced security\n");
         $this->SetOption(CURLOPT_SSL_VERIFYHOST, RAXSDK_SSL_VERIFYHOST);
         $this->SetOption(CURLOPT_SSL_VERIFYPEER, RAXSDK_SSL_VERIFYPEER);
         if (defined('RAXSDK_CACERTPEM') && file_exists(RAXSDK_CACERTPEM)) {
