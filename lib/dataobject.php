@@ -24,8 +24,8 @@ require_once(__DIR__.'/objstorebase.php');
  *
  * @author Glen Campbell <glen.campbell@rackspace.com>
  */
-class dataobject extends ObjStoreBase
-{
+class DataObject extends ObjStoreBase {
+
     public
         $name,				// the object name
         $hash,              // hash value of object
@@ -44,323 +44,309 @@ class dataobject extends ObjStoreBase
          * properties
          */
         $header_translate = array(
-            'Etag' => 'hash',
-            'Last-Modified' => 'last_modified'
+        	'Etag' => 'hash',
+        	'Last-Modified' => 'last_modified'
         );
 
-    /**
-     * A DataObject is related to a container and has a name
-     *
-     * If `$name` is specified, then it attempts to retrieve the object from the
-     * object store.
-     *
-     * @param Container $container the container holding this object
-     * @param mixed     $cdata     if an object or array, it is treated as values
-     *      with which to populate the object. If it is a string, it is
-     *      treated as a name and the object's info is retrieved from
-     *      the service.
-     * @return void
-     */
-    public function __construct($container, $cdata=NULL)
-    {
-        parent::__construct();
-        $this->container = $container;
-        if (is_object($cdata)) {
-            foreach($cdata as $property => $value)
-                if ($property == 'metadata')
-                    $this->metadata->SetArray($value);
-                else
-                    $this->$property = $value;
-        } elseif (isset($cdata)) {
+	/**
+	 * A DataObject is related to a container and has a name
+	 *
+	 * If `$name` is specified, then it attempts to retrieve the object from the
+	 * object store.
+	 *
+	 * @param Container $container the container holding this object
+	 * @param mixed $cdata if an object or array, it is treated as values
+	 *      with which to populate the object. If it is a string, it is
+	 *      treated as a name and the object's info is retrieved from
+	 *      the service.
+	 * @return void
+	 */
+	public function __construct($container, $cdata=NULL) {
+	    parent::__construct();
+		$this->container = $container;
+		if (is_object($cdata)) {
+		    foreach($cdata as $property => $value)
+		        if ($property == 'metadata')
+		            $this->metadata->SetArray($value);
+		        else
+    		        $this->$property = $value;
+		}
+		elseif (isset($cdata)) {
             $this->name = $cdata;
-            $this->Fetch();
-        }
-    } // __construct()
+			$this->Fetch();
+		}
+	} // __construct()
 
-    /**
-     * Returns the URL of the data object
-     *
-     * If the object is new and doesn't have a name, then an exception is
-     * thrown.
-     *
-     * @return string
-     * @throws NoNameError
-     */
-    public function Url()
-    {
-        if (!$this->name)
-            throw new NoNameError(_('Object has no name'));
+	/**
+	 * Returns the URL of the data object
+	 *
+	 * If the object is new and doesn't have a name, then an exception is
+	 * thrown.
+	 *
+	 * @return string
+	 * @throws NoNameError
+	 */
+	public function Url() {
+		if (!$this->name)
+			throw new NoNameError(_('Object has no name'));
+		return noslash($this->container->Url()) . '/' .
+				str_replace('%2F', '/', rawurlencode($this->name));
 
-        return noslash($this->container->Url()) . '/' .
-                str_replace('%2F', '/', rawurlencode($this->name));
+	}
 
-    }
+	/**
+	 * Creates (or updates; both the same) an instance of the object
+	 *
+	 * @api
+	 * @param array $params an optional associative array that can contain the
+	 *      'name' and 'content_type' of the object
+	 * @param string $filename if provided, then the object is loaded from the
+	 *		specified file
+	 * @return boolean
+	 * @throws CreateUpdateError
+	 */
+	public function Create($params=array(), $filename=NULL) {
+		// set/validate the parameters
+		$this->SetParams($params);
+		$fp = FALSE; // assume no file upload
 
-    /**
-     * Creates (or updates; both the same) an instance of the object
-     *
-     * @api
-     * @param array $params an optional associative array that can contain the
-     *      'name' and 'content_type' of the object
-     * @param string $filename if provided, then the object is loaded from the
-     *		specified file
-     * @return boolean
-     * @throws CreateUpdateError
-     */
-    public function Create($params=array(), $filename=NULL)
-    {
-        // set/validate the parameters
-        $this->SetParams($params);
-        $fp = FALSE; // assume no file upload
+		// if the filename is provided, process it
+		if ($filename) {
+			$fp = @fopen($filename, 'r');
+			if (!$fp) {
+				throw new IOError(sprintf(
+					_('Could not open file [%s] for reading'), $filename));
+			}
 
-        // if the filename is provided, process it
-        if ($filename) {
-            $fp = @fopen($filename, 'r');
-            if (!$fp) {
-                throw new IOError(sprintf(
-                    _('Could not open file [%s] for reading'), $filename));
-            }
+			clearstatcache(TRUE, $filename);
 
-            clearstatcache(TRUE, $filename);
+			$filesize = (float) sprintf("%u", filesize($filename));
+			if ($filesize > \OpenCloud\ObjectStore::MAX_OBJECT_SIZE) {
+				throw new ObjectError("File size exceeds maximum object size.");
+			}
+			$this->content_length = $filesize;
 
-            $filesize = (float) sprintf("%u", filesize($filename));
-            if ($filesize > \OpenCloud\ObjectStore::MAX_OBJECT_SIZE) {
-                throw new ObjectError("File size exceeds maximum object size.");
-            }
-            $this->content_length = $filesize;
+			if (empty($this->content_type))
+				$this->_guess_content_type($filename);
+			/*
+			$this->write($fp, $size, $verify);
+			fclose($fp);
+			return TRUE;
+			*/
+			$this->debug('Uploading %u bytes from %s', $filesize, $filename);
+		}
+		else {
+			// compute the length
+			$this->content_length = strlen($this->data);
+		}
 
-            if (empty($this->content_type))
-                $this->_guess_content_type($filename);
-            /*
-            $this->write($fp, $size, $verify);
-            fclose($fp);
+		// flag missing Content-Type
+		if (empty($this->content_type))
+			$this->content_type = 'application/octet-stream';
 
-            return TRUE;
-            */
-            $this->debug('Uploading %u bytes from %s', $filesize, $filename);
-        } else {
-            // compute the length
-            $this->content_length = strlen($this->data);
-        }
+		// set the headers
+		$headers = $this->MetadataHeaders();
+		if (isset($this->etag))
+		    $headers['ETag'] = $this->etag;
+		$headers['Content-Type'] = $this->content_type;
+		$headers['Content-Length'] = $this->content_length;
 
-        // flag missing Content-Type
-        if (empty($this->content_type))
-            $this->content_type = 'application/octet-stream';
+		// copy any extra headers
+		if (!empty($this->extra_headers) ) {
+			foreach ($this->extra_headers as $header=>$value) {
+				$headers[$header] = $value;
+			}
+		}
 
-        // set the headers
-        $headers = $this->MetadataHeaders();
-        if (isset($this->etag))
-            $headers['ETag'] = $this->etag;
-        $headers['Content-Type'] = $this->content_type;
-        $headers['Content-Length'] = $this->content_length;
+		// perform the request
+		$response = $this->Service()->Request(
+			$this->Url(),
+			'PUT',
+			$headers,
+			$fp ? $fp : $this->data
+		);
 
-        // copy any extra headers
-        if (!empty($this->extra_headers) ) {
-            foreach ($this->extra_headers as $header=>$value) {
-                $headers[$header] = $value;
-            }
-        }
+		// check the status
+		if (($stat=$response->HttpStatus()) >= 300) {
+			throw new CreateUpdateError(
+			    sprintf(
+			        _('Problem saving/updating object [%s] HTTP status [%s] '.
+			            'response [%s]'),
+				    $this->Url(),
+				    $stat,
+				    $response->HttpBody()));
+			return FALSE;
+		}
 
-        // perform the request
-        $response = $this->Service()->Request(
-            $this->Url(),
-            'PUT',
-            $headers,
-            $fp ? $fp : $this->data
-        );
+		// set values from response
+		foreach($response->Headers() as $key => $value) {
+			if (isset($this->header_translate[$key])) {
+				$this->{$this->header_translate[$key]} = $value;
+			}
+		}
 
-        // check the status
-        if (($stat=$response->HttpStatus()) >= 300) {
-            throw new CreateUpdateError(
-                sprintf(
-                    _('Problem saving/updating object [%s] HTTP status [%s] '.
-                        'response [%s]'),
-                    $this->Url(),
-                    $stat,
-                    $response->HttpBody()));
+		// close the file handle
+		if ($fp)
+			fclose($fp);
 
-            return FALSE;
-        }
+		return $response;
+	} // create()
 
-        // set values from response
-        foreach ($response->Headers() as $key => $value) {
-            if (isset($this->header_translate[$key])) {
-                $this->{$this->header_translate[$key]} = $value;
-            }
-        }
+	/**
+	 * Update() is provided as an alias for the Create() method
+	 *
+	 * Since update and create both use a PUT request, the different functions
+	 * may allow the developer to distinguish between the semantics in his or
+	 * her application.
+	 *
+	 * @api
+	 * @param array $params an optional associative array that can contain the
+	 *      'name' and 'type' of the object
+	 * @param string $filename if provided, the object is loaded from the file
+	 * @return boolean
+	 */
+	public function Update($params=array(), $filename='') {
+		return $this->Create($params, $filename);
+	}
 
-        // close the file handle
-        if ($fp)
-            fclose($fp);
+	/**
+	 * Deletes an object from the Object Store
+	 *
+	 * Note that we can delete without retrieving by specifying the name in the
+	 * parameter array.
+	 *
+	 * @api
+	 * @param array $params an array of parameters
+	 * @return HttpResponse if successful; FALSE if not
+	 * @throws DeleteError
+	 */
+	public function Delete($params=array()) {
+		$this->SetParams($params);
+		$response = $this->Service()->Request(
+			$this->Url(),
+			'DELETE'
+		);
 
-        return $response;
-    } // create()
+		// check the status
+		if (($stat=$response->HttpStatus()) >= 300) {
+			throw new DeleteError(
+			    sprintf(
+			        _('Problem deleting object [%s] HTTP status [%s]'.
+			            ' response [%s]'),
+				    $this->Url(),
+				    $stat,
+				    $response->HttpBody()));
+			return FALSE;
+		}
+		return $response;
+	}
 
-    /**
-     * Update() is provided as an alias for the Create() method
-     *
-     * Since update and create both use a PUT request, the different functions
-     * may allow the developer to distinguish between the semantics in his or
-     * her application.
-     *
-     * @api
-     * @param array $params an optional associative array that can contain the
-     *      'name' and 'type' of the object
-     * @param  string  $filename if provided, the object is loaded from the file
-     * @return boolean
-     */
-    public function Update($params=array(), $filename='')
-    {
-        return $this->Create($params, $filename);
-    }
+	/**
+	 * Copies the object to another container/object
+	 *
+	 * Note that this function, because it operates within the Object Store
+	 * itself, is much faster than downloading the object and re-uploading it
+	 * to a new object.
+	 *
+	 * @param DataObject $target the target of the COPY command
+	 */
+	public function Copy(Dataobject $target) {
+	    $uri = sprintf('/%s/%s',
+	        $target->Container()->Name(), $target->Name());
+	    $this->debug('Copying object to [%s]', $uri);
+	    $response = $this->Service()->Request(
+	        $this->Url(),
+	        'COPY',
+	        array('Destination' => $uri ));
 
-    /**
-     * Deletes an object from the Object Store
-     *
-     * Note that we can delete without retrieving by specifying the name in the
-     * parameter array.
-     *
-     * @api
-     * @param  array        $params an array of parameters
-     * @return HttpResponse if successful; FALSE if not
-     * @throws DeleteError
-     */
-    public function Delete($params=array())
-    {
-        $this->SetParams($params);
-        $response = $this->Service()->Request(
-            $this->Url(),
-            'DELETE'
-        );
+	    // check response code
+	    if ($response->HttpStatus() > 202)
+	        throw new ObjectCopyError(sprintf(
+	            _('Error copying object [%s], status [%d] response [%s]'),
+	            $this->Url(), $response->HttpStatus(), $response->HttpBody()));
 
-        // check the status
-        if (($stat=$response->HttpStatus()) >= 300) {
-            throw new DeleteError(
-                sprintf(
-                    _('Problem deleting object [%s] HTTP status [%s]'.
-                        ' response [%s]'),
-                    $this->Url(),
-                    $stat,
-                    $response->HttpBody()));
+	    return $response;
+	}
 
-            return FALSE;
-        }
+	/**
+	 * Returns the container of the object
+	 *
+	 * @return Container
+	 */
+	public function Container() {
+	    return $this->container;
+	}
 
-        return $response;
-    }
+	/**
+	 * returns the TEMP_URL for the object
+	 *
+	 * Some notes:
+	 * * The `$secret` value is arbitrary; it must match the value set for
+	 *   the `X-Account-Meta-Temp-URL-Key` on the account level. This can be
+	 *   set by calling `$service->SetTempUrlSecret($secret)`.
+	 * * The `$expires` value is the number of seconds you want the temporary
+	 *   URL to be valid for. For example, use `60` to make it valid for a
+	 *   minute
+	 * * The `$method` must be either GET or PUT. No other methods are
+	 *   supported.
+	 *
+	 * @param string $secret the shared secret
+	 * @param integer $expires the expiration time (in seconds)
+	 * @param string $method either GET or PUT
+	 * @return string the temporary URL
+	 */
+	public function TempUrl($secret, $expires, $method) {
+		$method = strtoupper($method);
+		$expiry_time = time() + $expires;
 
-    /**
-     * Copies the object to another container/object
-     *
-     * Note that this function, because it operates within the Object Store
-     * itself, is much faster than downloading the object and re-uploading it
-     * to a new object.
-     *
-     * @param DataObject $target the target of the COPY command
-     */
-    public function Copy(Dataobject $target)
-    {
-        $uri = sprintf('/%s/%s',
-            $target->Container()->Name(), $target->Name());
-        $this->debug('Copying object to [%s]', $uri);
-        $response = $this->Service()->Request(
-            $this->Url(),
-            'COPY',
-            array('Destination' => $uri ));
+		// check for proper method
+		switch($method) {
+		case 'GET':
+		case 'PUT':
+			break;
+		default:
+			throw new TempUrlMethodError(sprintf(
+				_('Bad method [%s] for TempUrl; only GET or PUT supported'),
+				$method));
+		}
 
-        // check response code
-        if ($response->HttpStatus() > 202)
-            throw new ObjectCopyError(sprintf(
-                _('Error copying object [%s], status [%d] response [%s]'),
-                $this->Url(), $response->HttpStatus(), $response->HttpBody()));
+		// construct the URL
+		$url = $this->Url();
+		$path = parse_url($url, PHP_URL_PATH);
+		$hmac_body = "$method\n$expiry_time\n$path";
+		$hash = hash_hmac('sha1', $hmac_body, $secret);
+		$this->debug('URL [%s] SIG [%s] HASH [%s]', $url, $hmac_body, $hash);
+		$temp_url = sprintf('%s?temp_url_sig=%s&temp_url_expires=%d',
+			$url, $hash, $expiry_time);
 
-        return $response;
-    }
+		// debug that stuff
+		$this->debug('TempUrl generated [%s]', $temp_url);
 
-    /**
-     * Returns the container of the object
-     *
-     * @return Container
-     */
-    public function Container()
-    {
-        return $this->container;
-    }
+		return $temp_url;
+	}
 
-    /**
-     * returns the TEMP_URL for the object
-     *
-     * Some notes:
-     * * The `$secret` value is arbitrary; it must match the value set for
-     *   the `X-Account-Meta-Temp-URL-Key` on the account level. This can be
-     *   set by calling `$service->SetTempUrlSecret($secret)`.
-     * * The `$expires` value is the number of seconds you want the temporary
-     *   URL to be valid for. For example, use `60` to make it valid for a
-     *   minute
-     * * The `$method` must be either GET or PUT. No other methods are
-     *   supported.
-     *
-     * @param  string  $secret  the shared secret
-     * @param  integer $expires the expiration time (in seconds)
-     * @param  string  $method  either GET or PUT
-     * @return string  the temporary URL
-     */
-    public function TempUrl($secret, $expires, $method)
-    {
-        $method = strtoupper($method);
-        $expiry_time = time() + $expires;
+	/**
+	 * Sets object data from string
+	 *
+	 * This is a convenience function to permit the use of other technologies
+	 * for setting an object's content.
+	 *
+	 * @param string $data
+	 * @return void
+	 */
+	public function SetData($data) {
+		$this->data = (string) $data;
+	}
 
-        // check for proper method
-        switch ($method) {
-        case 'GET':
-        case 'PUT':
-            break;
-        default:
-            throw new TempUrlMethodError(sprintf(
-                _('Bad method [%s] for TempUrl; only GET or PUT supported'),
-                $method));
-        }
-
-        // construct the URL
-        $url = $this->Url();
-        $path = parse_url($url, PHP_URL_PATH);
-        $hmac_body = "$method\n$expiry_time\n$path";
-        $hash = hash_hmac('sha1', $hmac_body, $secret);
-        $this->debug('URL [%s] SIG [%s] HASH [%s]', $url, $hmac_body, $hash);
-        $temp_url = sprintf('%s?temp_url_sig=%s&temp_url_expires=%d',
-            $url, $hash, $expiry_time);
-
-        // debug that stuff
-        $this->debug('TempUrl generated [%s]', $temp_url);
-
-        return $temp_url;
-    }
-
-    /**
-     * Sets object data from string
-     *
-     * This is a convenience function to permit the use of other technologies
-     * for setting an object's content.
-     *
-     * @param  string $data
-     * @return void
-     */
-    public function SetData($data)
-    {
-        $this->data = (string) $data;
-    }
-
-    /**
-     * Return object's data as a string
-     *
-     * @return string the entire object
-     */
-    public function SaveToString()
-    {
-        $result = $this->Service()->Request($this->Url());
-
-        return $result->HttpBody();
-    }
+	/**
+	 * Return object's data as a string
+	 *
+	 * @return string the entire object
+	 */
+	public function SaveToString() {
+		$result = $this->Service()->Request($this->Url());
+		return $result->HttpBody();
+	}
 
     /**
      * Saves the object's data to local filename
@@ -381,9 +367,9 @@ class dataobject extends ObjStoreBase
      * $doc->SaveToFilename("/home/ej/cloudfiles/readme.restored");
      * </code>
      *
-     * @param  string                   $filename name of local file to write data to
-     * @return boolean                  <kbd>TRUE</kbd> if successful
-     * @throws IOException              error opening file
+     * @param string $filename name of local file to write data to
+     * @return boolean <kbd>TRUE</kbd> if successful
+     * @throws IOException error opening file
      * @throws InvalidResponseException unexpected response
      */
     public function SaveToFilename($filename)
@@ -394,13 +380,12 @@ class dataobject extends ObjStoreBase
                 _('Could not open file [%s] for writing'), $filename));
         }
         $result = $this->Service()->Request(
-            $this->Url(),
-            'GET',
-            array(),
-            $fp
+        	$this->Url(),
+        	'GET',
+        	array(),
+        	$fp
         );
         fclose($fp);
-
         return $result;
     }
 
@@ -429,11 +414,10 @@ class dataobject extends ObjStoreBase
      * @param string $email An email address that will be notified when
      *      the object is purged.
      * @return void
-     * @throws CdnError     if the container is not CDN-enabled
+     * @throws CdnError if the container is not CDN-enabled
      * @throws CdnHttpError if there is an HTTP error in the transaction
      */
-    public function PurgeCDN($email)
-    {
+    public function PurgeCDN($email) {
         $cdn = $this->Container()->CDNURL();
         if (!$cdn)
             throw new CdnError(_('Container is not CDN-enabled'));
@@ -458,8 +442,7 @@ class dataobject extends ObjStoreBase
      *
      * @return string
      */
-    public function CDNURL()
-    {
+    public function CDNURL() {
         return $this->Container()->CDNURL().'/'.$this->name;
     }
 
@@ -471,12 +454,11 @@ class dataobject extends ObjStoreBase
      *      default URL.
      * @return string
      */
-    public function PublicURL($type=NULL)
-    {
+    public function PublicURL($type=NULL) {
         $prefix = $this->Container()->CDNURI();
         if (!$prefix)
             return NULL;
-        switch (strtoupper($type)) {
+        switch(strtoupper($type)) {
         case 'SSL':
             return $this->Container()->SSLURI().'/'.$this->name;
         case 'STREAMING':
@@ -486,61 +468,58 @@ class dataobject extends ObjStoreBase
         }
     }
 
-    /********** PRIVATE METHODS **********/
+	/********** PRIVATE METHODS **********/
 
-    /**
-     * Sets parameters from an array; validates them
-     *
-     * @param  array                 $params associative array of parameters
-     * @return void
-     * @throws UnknownParameterError
-     */
-    private function SetParams($params)
-    {
-        foreach ($params as $item => $value) {
-            switch ($item) {
-            case 'name':
-                $this->name = $value;
-                break;
-            case 'type':
-                throw new UnknownParameterError(
-                    _('Parameter [type] is deprecated; use "content_type"'));
-            case 'content_type':
-                $this->content_type = $value;
-                break;
-            case 'extra_headers':
-                $this->extra_headers = $value;
-                break;
-            default:
-                throw new UnknownParameterError(
-                    sprintf(
-                        _('Unrecognized parameter [%s] for object [%s]'),
-                        $item,
-                        $this->Url()));
-            }
-        }
-    }
+	/**
+	 * Sets parameters from an array; validates them
+	 *
+	 * @param array $params associative array of parameters
+	 * @return void
+	 * @throws UnknownParameterError
+	 */
+	private function SetParams($params) {
+		foreach($params as $item => $value) {
+			switch($item) {
+			case 'name':
+				$this->name = $value;
+				break;
+			case 'type':
+				throw new UnknownParameterError(
+					_('Parameter [type] is deprecated; use "content_type"'));
+			case 'content_type':
+				$this->content_type = $value;
+				break;
+			case 'extra_headers':
+				$this->extra_headers = $value;
+				break;
+			default:
+				throw new UnknownParameterError(
+				    sprintf(
+				        _('Unrecognized parameter [%s] for object [%s]'),
+					    $item,
+					    $this->Url()));
+			}
+		}
+	}
 
-    /**
-     * Retrieves a single object, parses headers
-     *
-     * @return void
-     * @throws NoNameError, ObjFetchError
-     */
-    private function Fetch()
-    {
-        if (!$this->name)
-            throw new NoNameError(_('Cannot retrieve an unnamed object'));
+	/**
+	 * Retrieves a single object, parses headers
+	 *
+	 * @return void
+	 * @throws NoNameError, ObjFetchError
+	 */
+	private function Fetch() {
+		if (!$this->name)
+			throw new NoNameError(_('Cannot retrieve an unnamed object'));
 
         $response = $this->Service()->Request(
-            $this->Url(), 'HEAD', array('Accept'=>'*/*'));
+        	$this->Url(), 'HEAD', array('Accept'=>'*/*'));
         //$this->data = $response->HttpBody();
 
         // check for errors
         if ($response->HttpStatus() >= 300) {
             throw new ObjFetchError(
                 sprintf(_('Problem retrieving object [%s]'), $this->Url()));
-
             return FALSE;
         }
 
@@ -548,8 +527,8 @@ class dataobject extends ObjStoreBase
             $this->extra_headers = array();
 
         // set headers as metadata?
-        foreach ($response->Headers() as $header => $value) {
-            switch ($header) {
+        foreach($response->Headers() as $header => $value) {
+            switch($header) {
             case 'Content-Type':
                 $this->content_type = $value;
                 break;
@@ -564,18 +543,17 @@ class dataobject extends ObjStoreBase
 
         // parse the metadata
         $this->GetMetadata($response);
-    }
+	}
 
-    /**
-     * Returns the service associated with this object
-     *
-     * It's actually the object's container's service, so this method will
-     * simplify things a bit.
-     */
-    private function Service()
-    {
-        return $this->container->Service();
-    }
+	/**
+	 * Returns the service associated with this object
+	 *
+	 * It's actually the object's container's service, so this method will
+	 * simplify things a bit.
+	 */
+	private function Service() {
+	    return $this->container->Service();
+	}
 
     /**
      * Performs an internal check to get the proper MIME type for an object
@@ -595,12 +573,11 @@ class dataobject extends ObjStoreBase
      * if fileinfo is not available it will try to use the internal
      * mime_content_type function.
      *
-     * @param  string                  $handle name of file or buffer to guess the type from
-     * @return boolean                 <kbd>TRUE</kbd> if successful
+     * @param string $handle name of file or buffer to guess the type from
+     * @return boolean <kbd>TRUE</kbd> if successful
      * @throws BadContentTypeException
      */
-    private function _guess_content_type($handle)
-    {
+    private function _guess_content_type($handle) {
         if ($this->content_type)
             return;
 
@@ -613,7 +590,7 @@ class dataobject extends ObjStoreBase
 
             if ($finfo) {
 
-                if (is_file((string) $handle))
+                if (is_file((string)$handle))
                     $ct = @finfo_file($finfo, $handle);
                 else
                     $ct = @finfo_buffer($finfo, $handle);
@@ -634,7 +611,7 @@ class dataobject extends ObjStoreBase
             }
         }
 
-        if (!$this->content_type && (string) is_file($handle) &&
+        if (!$this->content_type && (string)is_file($handle) &&
                 function_exists("mime_content_type")) {
             $this->content_type = @mime_content_type($handle);
         }
@@ -642,7 +619,6 @@ class dataobject extends ObjStoreBase
         if (!$this->content_type) {
             throw new NoContentTypeError(_('Required Content-Type not set'));
         }
-
         return TRUE;
     }
 
